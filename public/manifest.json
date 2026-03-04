@@ -1,0 +1,11 @@
+{
+  "short_name": "2B Digital",
+  "name": "2B Digital Sistema Técnico",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#1c1917",
+  "background_color": "#fafaf9",
+  "icons": [
+    { "src": "favicon.ico", "sizes": "64x64", "type": "image/x-icon" }
+  ]
+}
