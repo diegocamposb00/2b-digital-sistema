@@ -1,5 +1,89 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './supabase'
+import * as XLSX from 'xlsx'
+
+// ── Export helpers ────────────────────────────────────────────
+function exportClienteExcel(cliente, auditData, cotData) {
+  const wb = XLSX.utils.book_new()
+
+  // ── Hoja 1: Revisión Preliminar ──
+  const SECTIONS_LOCAL = [
+    { cat: 'WordPress', items: ['Versión WP','Versión PHP','Plugins desactualizados (cantidad)','Tema activo y versión','Plugins abandonados','Botones rotos visibles','Formularios funcionando'] },
+    { cat: 'Infraestructura', items: ['Tipo hosting / VPS','Uso disco (%)','Uso RAM estimado','Certificado SSL válido','Fecha expiración dominio','Backups visibles'] },
+    { cat: 'Seguridad', items: ['Firewall activo','Escaneo malware','Permisos sospechosos','Intentos login excesivos'] },
+    { cat: 'Performance', items: ['PageSpeed móvil','Tiempo de carga real','Peso homepage (MB)','LCP aproximado'] },
+    { cat: 'Correos', items: ['SPF configurado','DKIM configurado','DMARC configurado','¿Correos en mismo servidor?'] },
+  ]
+  const revRows = [['Ítem','Valor','Riesgo','Observación']]
+  SECTIONS_LOCAL.forEach(s => {
+    revRows.push([s.cat, '', '', ''])
+    s.items.forEach(label => {
+      const d = auditData?.[label] || {}
+      const risk = calcAutoRisk(label, d.valor) || d.riesgo_manual || ''
+      revRows.push([`  ${label}`, d.valor || '', risk, d.obs || ''])
+    })
+  })
+  revRows.push([])
+  revRows.push(['RESULTADO FINAL', cliente.riesgo_final || '—', '', ''])
+  const ws1 = XLSX.utils.aoa_to_sheet(revRows)
+  ws1['!cols'] = [{wch:35},{wch:22},{wch:15},{wch:40}]
+  XLSX.utils.book_append_sheet(wb, ws1, 'Revisión Preliminar')
+
+  // ── Hoja 2: Cotización ──
+  const cot = cotData || {}
+  const { diag, plan, total } = calcCotizacion(cot)
+  const cotRows = [
+    ['VARIABLES',''],
+    ['Variable','Valor'],
+    ['Tamaño sitio', cot.tamano || ''],
+    ['Infraestructura', cot.infraestructura || ''],
+    ['Correos críticos', cot.correos || ''],
+    ['¿Es e-commerce?', cot.ecommerce || ''],
+    ['Cantidad productos', cot.productos || ''],
+    [],
+    ['DIAGNÓSTICO',''],
+    ['Base diagnóstico', 690000],
+    ['Infraestructura VPS complejo', cot.infraestructura === 'VPS complejo' ? 200000 : 0],
+    ['Correos críticos', cot.correos === 'Sí' ? 150000 : 0],
+    ['Precio Diagnóstico', diag],
+    [],
+    ['PLAN MENSUAL',''],
+    ['Base plan mensual', 380000],
+    ['E-commerce', cot.ecommerce === 'Sí' ? 120000 : 0],
+    ['Cantidad productos > 500', Number(cot.productos) > 500 ? 100000 : 0],
+    ['Precio Plan Mensual', plan],
+    [],
+    ['PRECIO TOTAL RECOMENDADO', total],
+  ]
+  const ws2 = XLSX.utils.aoa_to_sheet(cotRows)
+  ws2['!cols'] = [{wch:30},{wch:20}]
+  XLSX.utils.book_append_sheet(wb, ws2, 'Cotización')
+
+  // ── Hoja 3: Datos cliente ──
+  const clienteRows = [
+    ['Cliente','Riesgo','Diagnóstico vendido','Plan mensual','Ingreso mensual','Responsable'],
+    [cliente.nombre, cliente.riesgo_final || '—', cliente.diagnostico_vendido || '', cliente.plan_mensual || '', cliente.ingreso_mensual || '', cliente.responsable || ''],
+  ]
+  const ws3 = XLSX.utils.aoa_to_sheet(clienteRows)
+  ws3['!cols'] = [{wch:28},{wch:16},{wch:22},{wch:18},{wch:20},{wch:20}]
+  XLSX.utils.book_append_sheet(wb, ws3, 'Datos Cliente')
+
+  XLSX.writeFile(wb, `Informe_${cliente.nombre.replace(/\s+/g,'_')}.xlsx`)
+}
+
+function exportGeneralExcel(clientes) {
+  const wb = XLSX.utils.book_new()
+  const rows = [['Cliente','Riesgo','Diagnóstico vendido','Plan mensual','Ingreso mensual','Responsable']]
+  clientes.forEach(c => {
+    rows.push([c.nombre, c.riesgo_final || '—', c.diagnostico_vendido || '', c.plan_mensual || '', c.ingreso_mensual || '', c.responsable || ''])
+  })
+  const total = clientes.reduce((s, c) => s + (Number(c.ingreso_mensual) || 0), 0)
+  rows.push(['TOTAL INGRESO MENSUAL', '', '', '', total, ''])
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+  ws['!cols'] = [{wch:28},{wch:16},{wch:22},{wch:18},{wch:20},{wch:20}]
+  XLSX.utils.book_append_sheet(wb, ws, 'Seguimiento Clientes')
+  XLSX.writeFile(wb, `Seguimiento_Clientes_${new Date().toISOString().slice(0,10)}.xlsx`)
+}
 
 // ── Risk logic ────────────────────────────────────────────────
 function calcAutoRisk(field, value) {
@@ -116,7 +200,7 @@ function Dashboard({ clientes, onSelect, onNew, loading }) {
       <SectionHeader
         title="Panel de clientes"
         subtitle={`${clientes.length} cliente${clientes.length !== 1 ? 's' : ''} registrado${clientes.length !== 1 ? 's' : ''}`}
-        action={<Btn onClick={onNew}>+ Nuevo cliente</Btn>}
+        action={<div className="flex gap-2">{clientes.length > 0 && <Btn variant="outline" onClick={() => exportGeneralExcel(clientes)}>↓ Exportar Excel</Btn>}<Btn onClick={onNew}>+ Nuevo cliente</Btn></div>}
       />
 
       <div className="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-4">
@@ -239,6 +323,7 @@ function ClienteDetail({ cliente, auditData, cotData, onEdit, onAudit, onCot, on
           </div>
         </div>
         <div className="flex gap-2">
+          <Btn variant="outline" onClick={() => exportClienteExcel(cliente, auditData, cotData)}>↓ Exportar Excel</Btn>
           <Btn variant="outline" onClick={onEdit}>Editar</Btn>
           <Btn variant="danger" onClick={onDelete}>Eliminar</Btn>
         </div>
